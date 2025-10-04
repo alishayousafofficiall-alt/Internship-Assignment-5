@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Calls</title>
+ <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="topbar">
+      <div class="me-avatar" id="meAvatarWrap" title="Click to add status"><img id="meAvatar" src="https://i.pravatar.cc/80?img=10" alt="me"></div>
+      <div class="me-info">
+        <h4 id="meName">whatsapp</h4>
+        <p id="meAbout">Hey there! I use WhatsApp Clone</p>
+      </div>
+      <button class="add-status" id="btnAddStatus">+ Status</button>
+      <button class="settings-btn" id="openSettings" title="Settings">⚙</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="chats">CHATS</div>
+      <div class="tab" data-tab="status">STATUS</div>
+      <div class="tab" data-tab="calls">CALLS</div>
+    </div>
+
+    <div class="search"><input id="search" placeholder="Search or start new chat"></div>
+    <div class="contacts" id="contacts"></div>
+
+    <div style="padding:8px;border-top:1px solid #eee;display:flex;gap:8px;justify-content:center">
+      <button id="addContact" class="small">+ Add Contact</button>
+      <button id="myProfile" class="small">My Profile</button>
+    </div>
+  </div>
+
+  <div class="chat" id="chatArea" style="--chat-bg:var(--bg)">
+    <div class="chat-header">
+      <div class="chat-left">
+        <div class="avatar"><img id="chatAvatar" src="https://i.pravatar.cc/80?img=1"></div>
+        <div class="meta">
+          <h3 id="chatTitle">Select a contact</h3>
+          <p id="chatSubtitle">Online</p>
+          <div id="typingIndicator" style="font-size:12px;color:#fff;opacity:.95;display:none">typing...</div>
+        </div>
+      </div>
+      <div class="chat-actions">
+        <button class="small-btn" id="callBtn" title="Call">
+  <i class="bi bi-telephone"></i>
+</button>
+
+<button class="small-btn" id="videoBtn" title="Video">
+  <i class="bi bi-camera-video"></i>
+</button>
+
+<button class="small-btn" id="stickerToggle" title="Stickers">
+  <i class="bi bi-emoji-smile"></i>
+</button>
+
+<button class="small-btn" id="attachBtn" title="Attach">
+  <i class="bi bi-paperclip"></i>
+</button>
+
+      </div>
+    </div>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="composer">
+      <input id="msgInput" type="text" placeholder="Type a message">
+      <input id="fileImage" type="file" accept="image/*" style="display:none">
+      <input id="fileVideo" type="file" accept="video/*" style="display:none">
+      <input id="fileStatus" type="file" accept="image/*,video/*" style="display:none">
+      <!-- Cancel Reply -->
+<button class="icon-btn" id="replyCancel" title="Cancel reply" style="display:none">
+  <i class="bi bi-reply-fill"></i>
+</button>
+
+<!-- Stickers -->
+<button class="icon-btn" id="stickerBtn" title="Stickers">
+  <i class="bi bi-emoji-smile"></i>
+</button>
+
+<!-- Send -->
+<button class="button" id="sendBtn" title="Send">
+  <i class="bi bi-send-fill"></i>
+</button>
+    </div>
+
+    <div class="sticker-panel" id="stickerPanel"></div>
+  </div>
+</div>
+
+<!-- modals -->
+<div class="backdrop" id="backdrop"><div class="modal" id="modal"></div></div>
+
+<!-- status viewer -->
+<div class="backdrop" id="statusBackdrop"><div class="modal" id="statusModal">
+  <div style="text-align:center">
+    <img id="statusMedia" style="display:none;max-width:100%">
+    <video id="statusVideo" controls style="display:none;max-width:100%"></video>
+    <div id="statusText" style="display:none;font-size:18px;padding:20px"></div>
+  </div>
+  <div style="text-align:center;margin-top:8px"><button id="closeStatus">Close</button></div>
+</div></div>
+
+<script>
+/* ---------- Helpers & keys ---------- */
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const uid = (n=6)=> Math.random().toString(36).slice(2,2+n);
+const LS = { CONTACTS:'wa_contacts_v5', PROFILE:'wa_profile_v5', STATUS:'wa_status_v5', CALLS:'wa_calls_v3' };
+
+/* ---------- State ---------- */
+let contacts = [];
+let profile = { name:'You', about:'Hey there! I use WhatsApp Clone', avatar:null, statusPrivacy:'all' };
+let currentId = null;
+let replyingTo = null;
+let typingTimeout = null;
+let stickers = [
+  "https://i.imgur.com/1w7YQqS.png",
+  "https://i.imgur.com/8Q1wXf2.png",
+  "https://i.imgur.com/7yUvePI.png"
+];
+let ctxMenu = null;
+let activeTab = 'chats'; // chats | status | calls
+
+/* ---------- Elements ---------- */
+const contactsEl = $('#contacts');
+const messagesEl = $('#messages');
+const chatTitleEl = $('#chatTitle');
+const chatSubtitleEl = $('#chatSubtitle');
+const chatAvatarEl = $('#chatAvatar');
+const meNameEl = $('#meName');
+const meAboutEl = $('#meAbout');
+const meAvatarEl = $('#meAvatar');
+const backdrop = $('#backdrop');
+const modal = $('#modal');
+const statusBackdrop = $('#statusBackdrop');
+const statusMedia = $('#statusMedia');
+const statusVideo = $('#statusVideo');
+const statusText = $('#statusText');
+const stickerPanel = $('#stickerPanel');
+const btnAddStatus = $('#btnAddStatus');
+const wallBtn = $('#wallBtn');
+
+/* ---------- Storage ---------- */
+function loadAll(){
+  const s = localStorage.getItem(LS.CONTACTS);
+  const p = localStorage.getItem(LS.PROFILE);
+  if(p) profile = JSON.parse(p);
+  if(s) contacts = JSON.parse(s);
+  else {
+    contacts = [
+      { id:'me', name:profile.name, about:profile.about, avatar:profile.avatar, wallpaper:null, messages:[], isMe:true, blocked:false, muted:false, typingEnabled:true, pinned:null },
+      { id:'c_'+uid(4), name:'Ali', about:'Available', avatar:'https://i.pravatar.cc/80?img=1', wallpaper:null, messages:[
+        { id:'m_'+uid(5), type:'text', text:'Hey! How are you?', sender:'them', time:formatTime(), status:null }
+      ], blocked:false, muted:false, typingEnabled:true, pinned:null },
+      { id:'c_'+uid(4), name:'Sara', about:'At work', avatar:'https://i.pravatar.cc/80?img=2', wallpaper:null, messages:[], blocked:false, muted:false, typingEnabled:true, pinned:null }
+    ];
+    saveContacts();
+  }
+  // ensure calls array exists
+  if(!localStorage.getItem(LS.CALLS)) saveCalls([]);
+  // ensure statuses exist
+  const statuses = loadStatuses();
+  if(!statuses.length){
+    saveStatuses([
+      { id:'s_'+uid(5), ownerId:contacts[1].id, data:'https://picsum.photos/seed/ali/400/700', when:new Date(Date.now()-1000*60*60*2).toISOString(), visibility:'all' },
+      { id:'s_'+uid(5), ownerId:contacts[2].id, data:'https://picsum.photos/seed/sara/400/700', when:new Date(Date.now()-1000*60*30).toISOString(), visibility:'all' }
+    ]);
+  }
+  syncProfileToMe();
+}
+function saveContacts(){ localStorage.setItem(LS.CONTACTS, JSON.stringify(contacts)); }
+function saveProfile(){ localStorage.setItem(LS.PROFILE, JSON.stringify(profile)); }
+function loadStatuses(){ const s = localStorage.getItem(LS.STATUS); return s?JSON.parse(s):[] }
+function saveStatuses(arr){ localStorage.setItem(LS.STATUS, JSON.stringify(arr)) }
+function loadCalls(){ const s = localStorage.getItem(LS.CALLS); return s?JSON.parse(s):[] }
+function saveCalls(arr){ localStorage.setItem(LS.CALLS, JSON.stringify(arr)) }
+function syncProfileToMe(){
+  const me = contacts.find(c=>c.id==='me');
+  if(me){ me.name = profile.name; me.about = profile.about; me.avatar = profile.avatar; saveContacts(); }
+}
+
+/* ---------- Tabs ---------- */
+$$('.tab').forEach(t=> t.addEventListener('click', ()=> {
+  $$('.tab').forEach(x=> x.classList.remove('active'));
+  t.classList.add('active');
+  activeTab = t.dataset.tab;
+  // switch content of sidebar
+  if(activeTab === 'chats') renderContacts($('#search').value || '');
+  else if(activeTab === 'status') renderStatusList();
+  else if(activeTab === 'calls') renderCallsList();
+}));
+
+/* ---------- Render contacts ---------- */
+function renderContacts(filter=''){
+  contactsEl.innerHTML = '';
+  const pinned = contacts.filter(c=>c.pinned);
+  const others = contacts.filter(c=>!c.pinned);
+  const list = [...pinned,...others].filter(c=>c.name.toLowerCase().includes(filter.toLowerCase()));
+  list.forEach(c=>{
+    const div = document.createElement('div');
+    div.className='contact';
+    div.dataset.id = c.id;
+    const last = c.messages && c.messages.slice(-1)[0];
+    let preview = c.about || '';
+    if(last){
+      if(last.type==='text') preview = last.text.slice(0,30);
+      if (last.type === 'image') 
+    preview = '<i class="bi bi-image"></i> Photo';
+
+if (last.type === 'video') 
+    preview = '<i class="bi bi-camera-video"></i> Video';
+
+if (last.type === 'sticker') 
+    preview = '<i class="bi bi-emoji-smile"></i> Sticker';
+
+    }
+    div.innerHTML = `
+      <div class="avatar"><img src="${c.avatar||'https://i.pravatar.cc/80?img=5'}"></div>
+      <div class="meta"><h4>${escapeHtml(c.name)} ${c.pinned?'<span class="pinned-badge">📌</span>':''}</h4><p>${c.pinned ? (c.pinned.preview || preview) : preview}</p></div>
+      <button class="info-btn" title="Contact Info">ℹ</button>
+    `;
+    div.addEventListener('click', (e)=> {
+      if(e.target.closest('.info-btn')) return;
+      openChat(c.id);
+    });
+    div.querySelector('.info-btn').addEventListener('click', (e)=>{ e.stopPropagation(); openContactInfo(c.id); });
+    div.ondblclick = ()=> editContact(c.id);
+    contactsEl.appendChild(div);
+  });
+}
+
+/* ---------- Render Calls list (for Calls tab) ---------- */
+function renderCallsList(){
+  const arr = loadCalls().slice().reverse(); // recent first
+  contactsEl.innerHTML = '';
+  if(arr.length === 0){
+    contactsEl.innerHTML = '<p style="padding:12px">No calls yet</p>';
+    return;
+  }
+  arr.forEach(entry=>{
+    const c = contacts.find(x=>x.id===entry.contactId) || {name:'Unknown', avatar:'https://i.pravatar.cc/80?img=5'};
+    const div = document.createElement('div');
+    div.className = 'call-item';
+    div.innerHTML = `
+      <div class="avatar"><img src="${c.avatar}" style="width:48px;height:48px;border-radius:50%"></div>
+      <div class="meta">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>${escapeHtml(c.name)}</strong>
+          <small>${new Date(entry.when).toLocaleString()}</small>
+        </div>
+        <div style="font-size:13px;color:#666">${entry.type === 'voice' ? 'Voice call' : 'Video call'} — ${formatDuration(entry.duration)}</div>
+      </div>
+      <div class="actions">
+        <button class="callBackBtn" data-id="${entry.id}">↩</button>
+        <button class="delCallBtn" data-id="${entry.id}" style="color:#b00">🗑</button>
+      </div>
+    `;
+    contactsEl.appendChild(div);
+  });
+  // attach listeners
+  $$('.callBackBtn').forEach(b=> b.addEventListener('click', ()=> {
+    const id = b.dataset.id; const entry = loadCalls().find(x=>x.id===id);
+    if(!entry) return;
+    const contact = contacts.find(x=>x.id===entry.contactId);
+    if(contact){ openChat(contact.id); simulateCallUI(contact.id, entry.type); logCall(contact.id, entry.type); }
+  }));
+  $$('.delCallBtn').forEach(b=> b.addEventListener('click', ()=> {
+    const id = b.dataset.id;
+    if(confirm('Delete this call entry?')){
+      const arr = loadCalls().filter(x=>x.id!==id);
+      saveCalls(arr);
+      renderCallsList();
+    }
+  }));
+}
+
+/* ---------- Chat ---------- */
+function openChat(id){
+  // switch to chats tab when opening chat
+  if(activeTab !== 'chats'){ document.querySelector('.tab[data-tab="chats"]').click(); }
+  currentId = id;
+  const c = contacts.find(x=>x.id===id);
+  if(!c) return;
+  chatTitleEl.textContent = c.name + (c.blocked ? ' (Blocked)' : '');
+  chatSubtitleEl.textContent = c.about || 'Online';
+  chatAvatarEl.src = c.avatar || 'https://i.pravatar.cc/80?img=1';
+  // apply wallpaper if set
+  document.querySelector('.chat').style.background = c.wallpaper ? `url(${c.wallpaper}) center/cover no-repeat` : 'var(--bg)';
+  renderMessages(c);
+  markMessagesSeenFor(c.id);
+}
+function renderMessages(contact){
+  messagesEl.innerHTML='';
+  (contact.messages || []).forEach(m=>{
+    const div = document.createElement('div');
+    div.className = 'msg ' + (m.sender==='me' ? 'sent':'received');
+    div.dataset.mid = m.id;
+    let html = '';
+    if(m.replyTo){
+      const rt = m.replyTo;
+      html += `<div class="reply-to">${
+  rt.type === 'text' 
+    ? escapeHtml(rt.text) 
+    : (
+        rt.type === 'image' 
+          ? '<i class="bi bi-image"></i> Photo' 
+          : (
+              rt.type === 'video' 
+                ? '<i class="bi bi-camera-video"></i> Video' 
+                : '<i class="bi bi-emoji-smile"></i> Sticker'
+            )
+      )
+}</div>`;
+
+    }
+    if(m.type==='text') html += `<div class="text">${escapeHtml(m.text)}</div>`;
+    else if(m.type==='image') html += `<div>${m.caption?escapeHtml(m.caption):''}</div><img class="media" src="${m.data}" onclick="openMediaFull('${m.data}','image')">`;
+    else if(m.type==='video') html += `<div>${m.caption?escapeHtml(m.caption):''}</div><video controls src="${m.data}" onclick="openMediaFull('${m.data}','video')"></video>`;
+    else if(m.type==='sticker') html += `<img class="media" src="${m.data}">`;
+    html += `<span class="time">${m.time}</span>`;
+    if(m.sender==='me'){ const status = m.status || 'sent'; html += `<span class="tick ${status==='seen'?'seen':''}">${status==='sent'?'✔':status==='delivered'?'✔✔':'✔✔'}</span>`; }
+    div.innerHTML = html;
+    div.addEventListener('contextmenu', (e)=> { e.preventDefault(); openCtxMenu(e, contact, m); });
+    div.addEventListener('click', ()=> selectMessageToReply(contact.id, m.id));
+    messagesEl.appendChild(div);
+  });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+/* ---------- Utilities ---------- */
+function escapeHtml(s){ if(!s) return ''; return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;') }
+function formatTime(){ return (new Date()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) }
+function formatDuration(s){ if(!s && s!==0) return '—'; const m = Math.floor(s/60); const sec = s % 60; return `${m}m ${sec}s`; }
+
+/* ---------- Sending + auto-reply ---------- */
+function pushMessage(contactId, msg){
+  const c = contacts.find(x=>x.id===contactId);
+  if(!c) return;
+  if(msg.sender==='me') msg.status = msg.status || 'sent';
+  c.messages.push(msg);
+  saveContacts();
+  if(currentId===contactId) renderMessages(c);
+  if(activeTab==='chats') renderContacts($('#search').value);
+}
+function sendText(text){
+  if(!currentId) { alert('Select a contact'); return; }
+  const contact = contacts.find(c=>c.id===currentId);
+  if(contact.blocked){ alert('This contact is blocked.'); return; }
+  const msg = { id:'m_'+uid(6), type:'text', text, sender:'me', time:formatTime(), replyTo: replyingTo ? cloneMessage(replyingTo) : null, status:'sent' };
+  pushMessage(currentId, msg);
+  replyingTo = null; toggleReplyPreview(false);
+  setTimeout(()=> setMessageStatus(currentId, msg.id, 'delivered'), 300 + Math.random()*600);
+  if(!contact.isMe && !contact.blocked){
+    const replyText = getAutoReply(text);
+    if(replyText){
+      if(contact.typingEnabled !== false) { simulateOtherTyping(contact.id); setTimeout(()=> { if(!contact.muted && !contact.blocked){ pushMessage(contact.id,{ id:'m_'+uid(6), type:'text', text:replyText, sender:'them', time:formatTime() }); } }, 700 + Math.random()*600); }
+      else setTimeout(()=> { if(!contact.muted && !contact.blocked) pushMessage(contact.id,{ id:'m_'+uid(6), type:'text', text:replyText, sender:'them', time:formatTime() }); }, 700 + Math.random()*600);
+    }
+  }
+}
+function sendImageFile(file, caption=''){
+  if(!file) return;
+  const contact = contacts.find(c=>c.id===currentId);
+  if(contact.blocked){ alert('This contact is blocked.'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const data = e.target.result;
+    const msg = { id:'m_'+uid(6), type:'image', data, caption, sender:'me', time:formatTime(), replyTo: replyingTo?cloneMessage(replyingTo):null, status:'sent' };
+    pushMessage(currentId, msg); replyingTo = null; toggleReplyPreview(false);
+    setTimeout(()=> setMessageStatus(currentId, msg.id, 'delivered'), 300 + Math.random()*600);
+  };
+  reader.readAsDataURL(file);
+}
+function sendVideoFile(file, caption=''){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const data = e.target.result;
+    const msg = { id:'m_'+uid(6), type:'video', data, caption, sender:'me', time:formatTime(), replyTo: replyingTo?cloneMessage(replyingTo):null, status:'sent' };
+    pushMessage(currentId, msg); replyingTo = null; toggleReplyPreview(false);
+    setTimeout(()=> setMessageStatus(currentId, msg.id, 'delivered'), 300 + Math.random()*600);
+  };
+  reader.readAsDataURL(file);
+}
+function sendSticker(url){
+  const contact = contacts.find(c=>c.id===currentId);
+  if(contact.blocked){ alert('This contact is blocked.'); return; }
+  const msg = { id:'m_'+uid(6), type:'sticker', data:url, sender:'me', time:formatTime(), status:'sent' };
+  pushMessage(currentId, msg);
+  setTimeout(()=> setMessageStatus(currentId, msg.id, 'delivered'), 300 + Math.random()*600);
+}
+
+/* ---------- status helpers ---------- */
+function addStatus(data,type){
+  if(profile.statusPrivacy==='none'){ alert('Your status is hidden (privacy: Nobody)'); return; }
+  let statuses = loadStatuses();
+  statuses.push({ id:'s_'+uid(6), ownerId:'me', data, when:new Date().toISOString(), visibility:'all' });
+  saveStatuses(statuses);
+  if(document.querySelector('[data-tab="status"]').classList.contains('active')) renderStatusList();
+}
+
+/* ---------render statuses---------- */
+function renderStatusList(){
+  const arr = loadStatuses();
+  const now = Date.now();
+  const recent = arr.filter(s => (now - new Date(s.when).getTime()) <= 1000*60*60*24);
+  saveStatuses(recent); // cleanup
+  const byOwner = {};
+  recent.forEach(s => { if(!byOwner[s.ownerId]) byOwner[s.ownerId]=[]; byOwner[s.ownerId].push(s); });
+  const box = $('#contacts');
+  box.innerHTML = '';
+  if(Object.keys(byOwner).length===0){ box.innerHTML = '<p style="padding:12px">No recent statuses</p>'; return; }
+  for(const ownerId of Object.keys(byOwner)){
+    const owner = contacts.find(c=>c.id===ownerId) || {name:'Unknown', avatar:'https://i.pravatar.cc/80?img=5'};
+    const header = document.createElement('div'); header.style.padding='8px'; header.innerHTML = `<h4 style="margin:6px 0">${owner.name}</h4>`; box.appendChild(header);
+    byOwner[ownerId].forEach(s=>{
+      const div = document.createElement('div'); div.className='status-row';
+      let thumb = '';
+      if(typeof s.data === 'string' && s.data.startsWith('data:image')) thumb = `<img src="${s.data}">`;
+      else if(typeof s.data === 'string' && s.data.startsWith('data:video')) thumb = `<video src="${s.data}" width="72" height="120"></video>`;
+      else thumb = `<div style="background:#eee;width:72px;height:120px;display:flex;align-items:center;justify-content:center;font-size:18px;border-radius:6px">TXT</div>`;
+      div.innerHTML = `${thumb}<div><div>${new Date(s.when).toLocaleString()}</div><div style="margin-top:6px"><button class="viewS" data-id="${s.id}">View</button> <button class="moreS" data-id="${s.id}">Info</button></div></div>`;
+      box.appendChild(div);
+    });
+  }
+  $$('.viewS').forEach(b=> b.addEventListener('click', ()=> { const id = b.dataset.id; const s = loadStatuses().find(x=>x.id===id); if(s) viewStatus(s.data); }));
+  $$('.moreS').forEach(b=> b.addEventListener('click', ()=> { const id = b.dataset.id; const s = loadStatuses().find(x=>x.id===id); if(s){ const owner = contacts.find(c=>c.id===s.ownerId) || {name:'Unknown'}; alert(`Status by: ${owner.name}\nWhen: ${new Date(s.when).toLocaleString()}\nVisibility: ${s.visibility}`); } }));
+}
+function viewStatus(data){
+  statusMedia.style.display='none'; statusVideo.style.display='none'; statusText.style.display='none';
+  if(typeof data === 'string' && data.startsWith('text::')){ statusText.textContent = data.slice(6); statusText.style.display='block'; openStatusModal(); return; }
+  if(data.startsWith('data:video')){ statusVideo.src = data; statusVideo.style.display='block'; statusVideo.play(); openStatusModal(); }
+  else { statusMedia.src = data; statusMedia.style.display='block'; openStatusModal(); }
+}
+function openStatusModal(){ statusBackdrop.style.display='flex'; }
+$('#closeStatus').addEventListener('click', ()=> statusBackdrop.style.display='none');
+
+/* ---------- Context menu (copy / set as status / pin / delete) ---------- */
+function openCtxMenu(e, contact, msg){
+  removeCtxMenu();
+  ctxMenu = document.createElement('div'); ctxMenu.className='ctx-menu';
+  const options = ['Copy','Forward','Pin/Unpin','Set as Status','Delete (for me)','Delete (everyone)'];
+  options.forEach(opt=>{
+    const el = document.createElement('div'); el.innerText = opt;
+    el.addEventListener('click', ()=> { handleCtxAction(opt, contact, msg); removeCtxMenu(); });
+    ctxMenu.appendChild(el);
+  });
+  document.body.appendChild(ctxMenu);
+  const x = Math.min(e.pageX, window.innerWidth - 220);
+  const y = Math.min(e.pageY, window.innerHeight - 160);
+  ctxMenu.style.left = x + 'px'; ctxMenu.style.top = y + 'px';
+  document.addEventListener('click', removeCtxMenu, {once:true});
+}
+function removeCtxMenu(){ if(ctxMenu){ ctxMenu.remove(); ctxMenu=null; } }
+function handleCtxAction(opt, contact, msg){
+  if(opt==='Copy'){ const textToCopy = msg && msg.type==='text' ? msg.text : (msg && msg.type==='image' ? 'Image' : (msg && msg.type==='video'?'Video':'Sticker')); navigator.clipboard.writeText(textToCopy).then(()=>{}); return; }
+  if(opt==='Forward'){ openForwardModal(msg); return; }
+  if(opt==='Pin/Unpin'){ if(contact.pinned && contact.pinned.msgId===msg.id){ contact.pinned = null; alert('Unpinned'); } else { contact.pinned = { msgId: msg.id, preview: msg.type==='text'? msg.text.slice(0,60) : (msg.type==='image'?'📷 Photo': msg.type==='video'?'🎥 Video':'🙂 Sticker') }; alert('Pinned'); } saveContacts(); if(activeTab==='chats') renderContacts($('#search').value); return; }
+  if(opt==='Set as Status'){ const arr = loadStatuses(); if(msg.type==='text'){ arr.push({ id:'s_'+uid(), ownerId:'me', data:'text::'+msg.text, when:new Date().toISOString(), visibility:profile.statusPrivacy }); saveStatuses(arr); alert('Text set as status'); } else if(msg.type==='image' || msg.type==='video' || msg.type==='sticker'){ const arr2 = loadStatuses(); arr2.push({ id:'s_'+uid(), ownerId:'me', data:msg.data, when:new Date().toISOString(), visibility:profile.statusPrivacy }); saveStatuses(arr2); alert('Media set as status'); } else alert('Cannot set this as status'); return; }
+  if(opt==='Delete (for me)'){ contact.messages = contact.messages.filter(m=>m.id!==msg.id); saveContacts(); if(currentId===contact.id) renderMessages(contact); if(activeTab==='chats') renderContacts($('#search').value); return; }
+  if(opt==='Delete (everyone)'){ const m = contact.messages.find(m=>m.id===msg.id); if(m){ m.type='text'; m.text='This message was deleted'; m.data=null; m.caption=null; m.status='seen'; saveContacts(); if(currentId===contact.id) renderMessages(contact); if(activeTab==='chats') renderContacts($('#search').value); } return; }
+}
+
+/* ---------- Forward modal ---------- */
+function openForwardModal(msg){
+  if(!msg) return alert('Nothing to forward');
+  let html = `<h3>Forward message</h3><p>Select a contact</p><div>`;
+  contacts.filter(c=>c.id!=='me').forEach(c=>{ html += `<p><button class="fwdBtn" data-id="${c.id}">${escapeHtml(c.name)}</button></p>`; });
+  html += `</div>`;
+  openModal(html);
+  $$('.fwdBtn').forEach(b => b.addEventListener('click', ()=>{
+    const id = b.dataset.id; const target = contacts.find(x=>x.id===id);
+    if(!target) return;
+    const clone = { id:'m_'+uid(6), type:msg.type, text:msg.text, caption:msg.caption, data:msg.data, sender:'me', time:formatTime(), status:'sent' };
+    pushMessage(id, clone); setTimeout(()=> setMessageStatus(id, clone.id, 'delivered'), 300 + Math.random()*600);
+    closeModal(); alert('Forwarded to ' + target.name);
+  }));
+}
+
+/* ---------- Typing / reply / stickers / attach ---------- */
+function selectMessageToReply(contactId, messageId){
+  const c = contacts.find(x=>x.id===contactId);
+  if(!c) return;
+  const m = c.messages.find(x=>x.id===messageId);
+  if(!m) return;
+  replyingTo = m;
+  toggleReplyPreview(true, m);
+}
+function toggleReplyPreview(show, msg){
+  const input = $('#msgInput'); const cancelBtn = $('#replyCancel');
+  if(show){ cancelBtn.style.display='inline-block'; input.placeholder = 'Replying to: ' + (msg && msg.type==='text' ? (msg.text.slice(0,30)) : (msg && msg.type==='image' ? 'Photo' : 'Video/Sticker')); } else { cancelBtn.style.display='none'; input.placeholder = 'Type a message'; replyingTo = null; }
+}
+$('#replyCancel').addEventListener('click', ()=> toggleReplyPreview(false));
+$('#msgInput').addEventListener('input', ()=>{
+  if(!currentId) return;
+  const tEl = $('#typingIndicator'); tEl.style.display = 'block';
+  clearTimeout(typingTimeout); typingTimeout = setTimeout(()=> tEl.style.display = 'none', 1200);
+});
+function simulateOtherTyping(contactId){ if(currentId !== contactId) return; const contact = contacts.find(c=>c.id===contactId); if(contact && contact.typingEnabled === false) return; const tEl = $('#typingIndicator'); tEl.textContent = 'typing...'; tEl.style.display = 'block'; setTimeout(()=> tEl.style.display = 'none', 800 + Math.random()*400); }
+
+$('#sendBtn').addEventListener('click', ()=> { const txt = $('#msgInput').value.trim(); if(txt) { sendText(txt); $('#msgInput').value=''; return; } openAttachModal(); });
+$('#attachBtn').addEventListener('click', openAttachModal);
+function openAttachModal(){ openModal(`<h3>Attach</h3><p><button id="attachImageBtn">Image</button> <button id="attachVideoBtn">Video</button></p>`); $('#attachImageBtn').addEventListener('click', ()=> { closeModal(); $('#fileImage').click(); }, {once:true}); $('#attachVideoBtn').addEventListener('click', ()=> { closeModal(); $('#fileVideo').click(); }, {once:true}); }
+
+$('#fileImage').addEventListener('change', function(){ const f = this.files[0]; if(!f) return; const cap = prompt('Add caption (optional):','') || ''; sendImageFile(f, cap); this.value=''; });
+$('#fileVideo').addEventListener('change', function(){ const f = this.files[0]; if(!f) return; const cap = prompt('Add caption (optional):','') || ''; sendVideoFile(f, cap); this.value=''; });
+
+$('#stickerToggle').addEventListener('click', ()=> { if(stickerPanel.style.display==='block') stickerPanel.style.display='none'; else openStickerPanel(); });
+function openStickerPanel(){ stickerPanel.innerHTML=''; stickers.forEach(url=>{ const img = document.createElement('img'); img.src=url; img.style.width='72px'; img.style.cursor='pointer'; img.onclick = ()=> { sendSticker(url); stickerPanel.style.display='none' }; stickerPanel.appendChild(img); }); stickerPanel.style.display='block'; }
+document.addEventListener('click', (e)=> { if(!e.target.closest('#stickerPanel') && !e.target.closest('#stickerToggle') && !e.target.closest('#stickerBtn')){ stickerPanel.style.display='none'; } });
+
+/* ---------- Profile / Settings ---------- */
+$('#openSettings').addEventListener('click', ()=> openSettings());
+$('#myProfile').addEventListener('click', ()=> openSettings());
+function openSettings(){
+  openModal(`<h3>Settings</h3>
+    <p><label>Name</label><br><input id="setName" value="${escapeHtml(profile.name)}"></p>
+    <p><label>About</label><br><input id="setAbout" value="${escapeHtml(profile.about)}"></p>
+    <p><label>Avatar</label><br><input id="setAvatar" type="file" accept="image/*"></p>
+    <p><label>Status privacy</label><br>
+      <select id="statusPrivacy">
+        <option value="all"${profile.statusPrivacy==='all'?' selected':''}>All (visible)</option>
+        <option value="none"${profile.statusPrivacy==='none'?' selected':''}>Nobody</option>
+      </select>
+    </p>
+    <p style="text-align:right"><button id="saveProfileBtn">Save</button></p>`);
+  $('#saveProfileBtn').addEventListener('click', ()=> {
+    const n = $('#setName').value.trim(); const a = $('#setAbout').value.trim();
+    const file = $('#setAvatar').files[0];
+    profile.name = n || profile.name; profile.about = a || profile.about;
+    profile.statusPrivacy = $('#statusPrivacy').value || 'all';
+    if(file){ const r = new FileReader(); r.onload = e => { profile.avatar = e.target.result; afterSave(); }; r.readAsDataURL(file); }
+    else afterSave();
+    function afterSave(){ saveProfile(); syncProfileToMe(); meNameEl.textContent = profile.name; meAboutEl.textContent = profile.about; if(profile.avatar) meAvatarEl.src = profile.avatar; closeModal(); if(activeTab==='chats') renderContacts($('#search').value); if(currentId==='me') openChat('me'); }
+  }, {once:true});
+}
+
+/* ---------- Contact Info: wallpaper + typing + mute/block ---------- */
+function openContactInfo(id){
+  const c = contacts.find(x=>x.id===id);
+  if(!c) return;
+  openModal(`
+    <h3>Contact Info</h3>
+    <div class="contact-card">
+      <img src="${c.avatar || 'https://i.pravatar.cc/120?img=5'}" alt="avatar" style="width:80px;height:80px;border-radius:50%;object-fit:cover">
+      <div><h4>${escapeHtml(c.name)}</h4><p>${escapeHtml(c.about || '')}</p></div>
+    </div>
+    <p style="margin-top:12px">
+      <button id="openChatBtn">Open Chat</button>
+      <button id="setWallBtn">Set Wallpaper (preset)</button>
+      <button id="uploadWallBtn">Upload Wallpaper</button>
+      <button id="toggleTypingBtn">${c.typingEnabled !== false ? 'Disable Typing' : 'Enable Typing'}</button>
+      <button id="toggleMuteBtn">${c.muted ? 'Unmute' : 'Mute'}</button>
+      <button id="toggleBlockBtn">${c.blocked ? 'Unblock' : 'Block'}</button>
+      <button id="deleteChatBtn" style="color:#b00">Delete Chat</button>
+    </p>
+  `);
+  $('#openChatBtn').addEventListener('click', ()=> { closeModal(); openChat(c.id); });
+  $('#setWallBtn').addEventListener('click', ()=> {
+    closeModal();
+    openModal(`<h3>Set Wallpaper</h3><p><button id="wDef">Default</button> <button id="wG">Green</button> <button id="wP">Pink</button></p>`);
+    $('#wDef').addEventListener('click', ()=> { c.wallpaper = null; saveContacts(); closeModal(); if(currentId===c.id) openChat(c.id); if(activeTab==='chats') renderContacts($('#search').value); }, {once:true});
+    $('#wG').addEventListener('click', ()=> { c.wallpaper = '#d1f7c4'; saveContacts(); closeModal(); if(currentId===c.id) openChat(c.id); if(activeTab==='chats') renderContacts($('#search').value); }, {once:true});
+    $('#wP').addEventListener('click', ()=> { c.wallpaper = '#ffe4e1'; saveContacts(); closeModal(); if(currentId===c.id) openChat(c.id); if(activeTab==='chats') renderContacts($('#search').value); }, {once:true});
+  });
+  $('#uploadWallBtn').addEventListener('click', ()=> {
+    const fI = document.createElement('input'); fI.type='file'; fI.accept='image/*';
+    fI.onchange = ()=> {
+      const f = fI.files[0]; if(!f) return;
+      const r = new FileReader();
+      r.onload = e => { c.wallpaper = e.target.result; saveContacts(); alert('Wallpaper uploaded'); if(currentId===c.id) openChat(c.id); closeModal(); if(activeTab==='chats') renderContacts($('#search').value); }
+      r.readAsDataURL(f);
+    };
+    fI.click();
+  }, {once:true});
+  $('#toggleTypingBtn').addEventListener('click', ()=> { c.typingEnabled = !(c.typingEnabled === false); saveContacts(); closeModal(); alert(c.typingEnabled !== false ? 'Typing enabled' : 'Typing disabled'); }, {once:true});
+  $('#toggleMuteBtn').addEventListener('click', ()=> { c.muted = !c.muted; saveContacts(); closeModal(); alert(c.muted ? 'Muted' : 'Unmuted'); }, {once:true});
+  $('#toggleBlockBtn').addEventListener('click', ()=> { c.blocked = !c.blocked; saveContacts(); closeModal(); alert(c.blocked ? 'Blocked' : 'Unblocked'); if(activeTab==='chats') renderContacts($('#search').value); }, {once:true});
+  $('#deleteChatBtn').addEventListener('click', ()=> { if(confirm('Delete all messages with ' + c.name + '?')){ c.messages = []; saveContacts(); closeModal(); if(currentId===c.id) renderMessages(c); if(activeTab==='chats') renderContacts($('#search').value); } }, {once:true});
+}
+
+/* ---------- Add / edit contact ---------- */
+$('#addContact').addEventListener('click', ()=> {
+  openModal(`<h3>Add Contact</h3><p><input id="newName" placeholder="Name"></p><p><input id="newAbout" placeholder="About"></p><p><input id="newAvatar" type="file" accept="image/*"></p><p style="text-align:right"><button id="createContact">Create</button></p>`);
+  $('#createContact').addEventListener('click', ()=> {
+    const name = $('#newName').value || 'New'; const about = $('#newAbout').value || '';
+    const file = $('#newAvatar').files[0];
+    if(file){ const r = new FileReader(); r.onload = e => { contacts.push({id:'c_'+uid(5), name, about, avatar:e.target.result, wallpaper:null, messages:[], blocked:false, muted:false, typingEnabled:true, pinned:null}); saveContacts(); closeModal(); if(activeTab==='chats') renderContacts($('#search').value); } ; r.readAsDataURL(file); }
+    else { contacts.push({id:'c_'+uid(5), name, about, avatar:null, wallpaper:null, messages:[], blocked:false, muted:false, typingEnabled:true, pinned:null}); saveContacts(); closeModal(); if(activeTab==='chats') renderContacts($('#search').value); }
+  }, {once:true});
+});
+contactsEl.addEventListener('dblclick', (e)=> {
+  const el = e.target.closest('.contact'); if(!el) return;
+  const id = el.dataset.id; const c = contacts.find(x=>x.id===id); if(!c || c.isMe) return;
+  openModal(`<h3>Edit ${escapeHtml(c.name)}</h3><p><input id="editName" value="${escapeHtml(c.name)}"></p><p><input id="editAbout" value="${escapeHtml(c.about)}"></p><p><input id="editAvatar" type="file" accept="image/*"></p><p style="text-align:right"><button id="saveEdit">Save</button></p>`);
+  $('#saveEdit').addEventListener('click', ()=> {
+    c.name = $('#editName').value || c.name; c.about = $('#editAbout').value || c.about;
+    const file = $('#editAvatar').files[0];
+    if(file){ const r = new FileReader(); r.onload = e => { c.avatar = e.target.result; saveContacts(); closeModal(); if(activeTab==='chats') renderContacts($('#search').value); if(currentId===c.id) openChat(c.id); } ; r.readAsDataURL(file); }
+    else { saveContacts(); closeModal(); if(activeTab==='chats') renderContacts($('#search').value); if(currentId===c.id) openChat(c.id); }
+  }, {once:true});
+});
+
+/* ---------- Add status via UI ---------- */
+btnAddStatus.addEventListener('click', ()=> {
+  openModal(`<h3>Upload Status</h3>
+    <p><button id="stImageBtn">📷 Image</button>
+    <button id="stVideoBtn">🎥 Video</button>
+    <button id="stTextBtn">✍ Text</button></p>`);
+  $('#stImageBtn').onclick = ()=> { closeModal(); $('#fileStatus').click(); };
+  $('#stVideoBtn').onclick = ()=> { closeModal(); $('#fileStatus').click(); };
+  $('#stTextBtn').onclick = ()=> {
+    const txt = prompt('Enter status text:','');
+    if(txt) addStatus('text::'+txt,'text');
+    closeModal();
+  };
+});
+$('#meAvatarWrap').addEventListener('click', ()=> btnAddStatus.click());
+
+/* ---------- fileStatus handling ---------- */
+$('#fileStatus').addEventListener('change', function(){
+  const f = this.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = e => { addStatus(e.target.result, f.type.startsWith('video') ? 'video' : 'image'); alert('Status uploaded'); if(document.querySelector('[data-tab="status"]').classList.contains('active')) renderStatusList(); }
+  reader.readAsDataURL(f);
+  this.value='';
+});
+
+/* ---------- Media viewer ---------- */
+window.openMediaFull = function(data, type){
+  statusMedia.style.display='none'; statusVideo.style.display='none'; statusText.style.display='none';
+  if(type==='video'){ statusVideo.src = data; statusVideo.style.display='block'; statusVideo.play(); }
+  else { statusMedia.src = data; statusMedia.style.display='block'; }
+  statusBackdrop.style.display='flex';
+}
+
+/* ---------- Calls ---------- */
+function logCall(contactId, type, opts={}){ const arr = loadCalls(); arr.push({ id:'call_'+uid(6), contactId, type, when:new Date().toISOString(), duration: opts.duration === undefined ? Math.floor(Math.random()*180) : opts.duration }); saveCalls(arr); if(activeTab==='calls') renderCallsList(); }
+function openCallHistory(){ // open in modal (alternate)
+  const arr = loadCalls().slice().reverse();
+  let html = `<h3>Call History</h3>`;
+  if(!arr.length) html += `<p>No calls yet</p>`;
+  arr.forEach(c=>{
+    const ct = contacts.find(x=>x.id===c.contactId) || {name:'Unknown', avatar:'https://i.pravatar.cc/80?img=5'};
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #eee"><img src="${ct.avatar}" style="width:48px;height:48px;border-radius:50%"><div style="flex:1"><strong>${escapeHtml(ct.name)}</strong><br><small>${new Date(c.when).toLocaleString()} — ${c.type==='voice'?'Voice':'Video'} — ${formatDuration(c.duration)}</small></div><div><button class="callBackBtn" data-id="${c.id}">↩</button> <button class="delCallBtn" data-id="${c.id}" style="color:#b00">🗑</button></div></div>`;
+  });
+  openModal(html);
+  $$('.callBackBtn').forEach(b=> b.addEventListener('click', ()=>{ const id=b.dataset.id; const entry = loadCalls().find(x=>x.id===id); if(entry){ const contact = contacts.find(x=>x.id===entry.contactId); if(contact){ closeModal(); openChat(contact.id); simulateCallUI(contact.id, entry.type); logCall(contact.id, entry.type); } } }));
+  $$('.delCallBtn').forEach(b=> b.addEventListener('click', ()=>{ const id=b.dataset.id; if(confirm('Delete this call entry?')){ const newArr = loadCalls().filter(x=>x.id!==id); saveCalls(newArr); closeModal(); openCallHistory(); } }));
+}
+function simulateCallUI(contactId, type){ const c = contacts.find(x=>x.id===contactId); if(!c) return; openModal(`<h3>${type==='voice' ? 'Calling' : 'Video calling'} ${escapeHtml(c.name)}</h3><p style="text-align:center">Connecting…</p><p style="text-align:center"><button id="endCallBtn">End</button></p>`); const start = Date.now(); $('#endCallBtn').addEventListener('click', ()=> { const dur = Math.floor((Date.now()-start)/1000); logCall(contactId, type, {duration:dur}); closeModal(); alert('Call ended — duration: ' + formatDuration(dur)); }, {once:true}); }
+$('#callBtn').addEventListener('click', ()=> { if(!currentId) { alert('Select a contact'); return; } const c = contacts.find(x=>x.id===currentId); if(c.isMe){ alert('Cannot call yourself'); return; } if(c.blocked){ alert('Contact blocked'); return; } simulateCallUI(c.id,'voice'); });
+$('#videoBtn').addEventListener('click', ()=> { if(!currentId) { alert('Select a contact'); return; } const c = contacts.find(x=>x.id===currentId); if(c.isMe){ alert('Cannot call yourself'); return; } if(c.blocked){ alert('Contact blocked'); return; } simulateCallUI(c.id,'video'); });
+
+/* ---------- Modal helpers ---------- */
+function openModal(html){ modal.innerHTML = html; backdrop.style.display = 'flex'; }
+function closeModal(){ backdrop.style.display = 'none'; modal.innerHTML = ''; }
+backdrop.addEventListener('click', (e)=> { if(e.target===backdrop) closeModal(); });
+
+/* ---------- Search ---------- */
+$('#search').addEventListener('input', (e)=> {
+  const q = e.target.value || '';
+  if(activeTab === 'chats') renderContacts(q);
+  else if(activeTab === 'status') renderStatusList();
+  else if(activeTab === 'calls') renderCallsList();
+});
+
+/* ---------- Init ---------- */
+loadAll();
+meNameEl.textContent = profile.name; meAboutEl.textContent = profile.about; if(profile.avatar) meAvatarEl.src = profile.avatar;
+renderContacts(); if(contacts.length) openChat(contacts[0].id);
+
+/* ---------- keyboard send ---------- */
+$('#msgInput').addEventListener('keypress', (e)=> { if(e.key==='Enter'){ e.preventDefault(); const txt = $('#msgInput').value.trim(); if(txt){ sendText(txt); $('#msgInput').value=''; } } });
+
+/* ---------- Save on close ---------- */
+window.addEventListener('beforeunload', ()=>{ saveContacts(); saveProfile(); });
+
+/* ---------- small helpers ---------- */
+function escapeAttr(s){ return (s||'').replaceAll('"','&quot;') }
+function setMessageStatus(contactId, messageId, status){ const c = contacts.find(x=>x.id===contactId); if(!c) return; const m = c.messages.find(x=>x.id===messageId); if(!m) return; m.status = status; saveContacts(); if(currentId===contactId) renderMessages(c); }
+function markMessagesSeenFor(contactId){ const c = contacts.find(x=>x.id===contactId); if(!c) return; let changed=false; c.messages.forEach(m=>{ if(m.sender==='me' && m.status !== 'seen'){ m.status='seen'; changed=true; } }); if(changed) saveContacts(); if(currentId===contactId) renderMessages(c); }
+function cloneMessage(m){ if(!m) return null; return JSON.parse(JSON.stringify(m)); }
+
+/* ---------- drag and drop to composer ---------- */
+const composerInput = document.querySelector('.composer input[type=text]');
+composerInput.addEventListener('dragover', e=> e.preventDefault());
+composerInput.addEventListener('drop', e=>{ e.preventDefault(); const files = e.dataTransfer.files; for(let f of files){ if(f.type.startsWith('image/')){ const reader = new FileReader(); reader.onload = ()=>{ const msg = { id:'m_'+uid(6), type:'image', data:reader.result, sender:'me', time:formatTime(), status:'sent' }; pushMessage(currentId, msg); setTimeout(()=> setMessageStatus(currentId, msg.id, 'delivered'), 300 + Math.random()*600); }; reader.readAsDataURL(f); } } });
+/* ---------- auto-reply rules ---------- */
+function getAutoReply(text) {
+  if (!text) return null;
+  const t = text.toLowerCase().trim();
+
+  // 👋 Greetings
+  if (/\b(hi|hello|hey)\b/.test(t)) 
+    return 'Hello';
+
+  // 😊 How are you
+  if (/\bhow are you\b/.test(t)) 
+    return "I'm fine, thanks!";
+
+  // 👍 What's up
+  if (/\bwhat\'?s up\b/.test(t) || /\bwhats up\b/.test(t)) 
+    return 'All good here!';
+
+  // 👋 Goodbye
+  if (/\b(bye|goodbye)\b/.test(t)) 
+    return 'Goodbye!';
+
+  // 🙏 Thanks
+  if (/\bthanks?\b/.test(t)) 
+    return "You're welcome!";
+
+  // 🤲 Islamic Greetings
+  if (/\b(aslamoalikum|ass?alam[ -]?o[ -]?alaikum|salam)\b/.test(t)) 
+    return 'Wa Alaikum Assalam';
+
+  // 🌸 Allah Hafiz
+  if (/\ballah[ -]?hafiz\b/.test(t)) 
+    return 'Allah Hafiz';
+
+  // 👉 Fallback replies
+  const fallbacks = [
+    'Okay',
+    'Got it.',
+    'Nice!',
+    'Thanks for the message.'
+  ];
+  return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+}
+
+
+/* ---------- Status ---------- */
+document.addEventListener('dblclick', e=>{ if(e.target.closest('.msg')){ const msg = e.target.closest('.msg'); let react = document.createElement('span'); react.innerText='❤'; react.style.position='absolute'; react.style.bottom='0'; react.style.right='0'; react.style.fontSize='16px'; msg.appendChild(react); setTimeout(()=>react.remove(),3000); } });
+
+/* ---------- F0r Call---------- */
+function renderCallsListSafe(){ if(activeTab === 'calls') renderCallsList(); }
+
+
+window.sendText = sendText;
+window.sendImageFile = sendImageFile;
+window.sendVideoFile = sendVideoFile;
+window.openCallHistory = openCallHistory;
+
+</script>
+</body>
+</html> 
